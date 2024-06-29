@@ -46,7 +46,7 @@
     #define X_IN_CENTER     402
     #define X_IN_MAX        800
     #define X_IN_DEADZONE   10
-    #define X_IN_SIGN       1
+    #define X_IN_SIGN       -1
 
     #define Y_IN_MIN        20
     #define Y_IN_CENTER     413
