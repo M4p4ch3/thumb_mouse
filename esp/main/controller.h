@@ -4,28 +4,23 @@
 
 #include <inttypes.h>
 
-#include "freertos/semphr.h"
-
 #include "utils.h"
-// TODO remove mouse from ctrl
-#include "mouse.h"
+
+// (X, Y) mapped values ranges
+#define X_OUT_MIN (-100)
+#define X_OUT_MAX 100
+#define Y_OUT_MIN (-100)
+#define Y_OUT_MAX 100
+#define X_OUT_CENTER (X_OUT_MIN + (X_OUT_MAX - X_OUT_MIN) / 2)
+#define Y_OUT_CENTER (Y_OUT_MIN + (Y_OUT_MAX - Y_OUT_MIN) / 2)
 
 typedef struct Controller_t
 {
     uint32_t magic;
-    esp_timer_handle_t timer;
-    SemaphoreHandle_t semSendHid;
 } Controller_t;
 
 Controller_t * CONTROLLER_init(void);
 
-// TODO remove mouse from ctrl
-void CONTROLLER_setMouse(Mouse_t * pMouse);
-
-uint8_t CONTROLLER_start(Controller_t * pInst);
-uint8_t CONTROLLER_stop(Controller_t * pInst);
-
-// uint8_t CONTROLLER_getButton(Controller_t * pInst, uint8_t btnIdx);
-// void CONTROLLER_getJoystick(Controller_t * pInst, uint8_t joyIdx, Coord_t * pCoord);
+uint8_t CONTROLLER_getJoy(Controller_t * pInst, Coord_t * pCoord);
 
 #endif // CONTROLLER_H

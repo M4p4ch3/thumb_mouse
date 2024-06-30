@@ -40,11 +40,12 @@
 #define DEADZONE 15
 
 // Oversampling
-#define ACQ_NB 64U
+#define ACQ_NB 10U
 
 #define MOUSE_REPORT_FREQ_HZ 60U
 #define MOUSE_SPEED_MAX 30
 
-#define LOG_LOOP_RATIO 20U
+#define MOUSE_LOG_LOOP_NB 20U
+#define CTRL_LOG_LOOP_NB (MOUSE_LOG_LOOP_NB * 4U)
 
 #endif // CONFIG_H

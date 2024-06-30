@@ -5,8 +5,10 @@
 #include <string.h>
 #include <stdarg.h>
 
+#include "esp_timer.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "config.h"
@@ -16,8 +18,15 @@
 
 #define GPIO_NUM_BTN_BOOT GPIO_NUM_0
 
-Controller_t * g_pCtrl = NULL;
-Mouse_t * g_pMouse = NULL;
+static const uint32_t MOUSE_MOVE_PERIOD_US = US_PER_S / MOUSE_REPORT_FREQ_HZ;
+
+// Initial mouse state
+static const uint8_t MOUSE_STATE_INIT = 0U;
+
+static SemaphoreHandle_t g_semMoveMouse = NULL;
+
+static Controller_t * g_pCtrl = NULL;
+static Mouse_t * g_pMouse = NULL;
 
 static void __attribute__((format (printf, 2, 3))) _log(LogLevel_e lvl, const char * sFmt, ...);
 
@@ -124,12 +133,121 @@ static void _log(LogLevel_e lvl, const char * sFmt, ...)
 //     printf("], raw = %04d, map = %02d\n", joy_y_in, joy_y_out);
 // }
 
+// static void print_val_report(int32_t x_raw, int32_t y_raw, int32_t x_map, int32_t y_map, int32_t mouse_x, int32_t mouse_y, uint16_t acqNb)
+// {
+//     _log(LOG_LVL_DEBUG, "joy.x  =  %04ld, joy.y  =  %04ld", x_map, y_map);
+//     _log(LOG_LVL_DEBUG, "mouse.x = %04ld, mouse.y = %04ld", mouse_x, mouse_y);
+//     _log(LOG_LVL_DEBUG, "acqNb = %u", acqNb);
+// }
+
+static void moveMouseFromCtrlMain(void *)
+{
+    uint8_t uRet = 0U;
+    BaseType_t baseRet = pdFALSE;
+
+    uint16_t loopCnt = 0U;
+
+    // int8_t sign = 0U;
+    uint16_t ctrlJoyAcqNb = 0U;
+    Coord_t coordCtrlJoy;
+    memset(&coordCtrlJoy, 0, sizeof(coordCtrlJoy));
+    Coord_t coordCtrlJoyAcc;
+    memset(&coordCtrlJoyAcc, 0, sizeof(coordCtrlJoyAcc));
+    Coord_t coordMouse;
+    memset(&coordMouse, 0, sizeof(coordMouse));
+
+    while (true)
+    {
+        // Can't go below 5 ms, as 1 tick
+        baseRet = xQueueSemaphoreTake(g_semMoveMouse, 5U / portTICK_PERIOD_MS);
+        if (baseRet && ctrlJoyAcqNb)
+        {
+            coordMouse.x = 0;
+            coordMouse.y = 0;
+
+            coordCtrlJoy.x = coordCtrlJoyAcc.x / ctrlJoyAcqNb;
+            coordCtrlJoy.y = coordCtrlJoyAcc.y / ctrlJoyAcqNb;
+
+            if (coordCtrlJoy.x < X_OUT_CENTER - DEADZONE)
+            {
+                coordMouse.x = - (X_OUT_CENTER - coordCtrlJoy.x - DEADZONE) / 3;
+            }
+            else if (coordCtrlJoy.x > X_OUT_CENTER + DEADZONE)
+            {
+                coordMouse.x = (coordCtrlJoy.x - X_OUT_CENTER - DEADZONE) / 3;
+            }
+
+            if (coordCtrlJoy.y < Y_OUT_CENTER - DEADZONE)
+            {
+                coordMouse.y = - (Y_OUT_CENTER - coordCtrlJoy.y - DEADZONE) / 3;
+            }
+            else if (coordCtrlJoy.y > Y_OUT_CENTER + DEADZONE)
+            {
+                coordMouse.y = (coordCtrlJoy.y - Y_OUT_CENTER - DEADZONE) / 3;
+            }
+
+            uRet = MOUSE_move(g_pMouse, (int8_t) coordMouse.x, (int8_t) coordMouse.y);
+            if (uRet)
+            {
+                _log(LOG_LVL_ERROR, "%s() MOUSE_move FAILED", __func__);
+                vTaskDelay(1000U / portTICK_PERIOD_MS);
+                continue;
+            }
+
+            if ((MOUSE_LOG_LOOP_NB < 0xFF) && (loopCnt == MOUSE_LOG_LOOP_NB))
+            {
+                _log(LOG_LVL_DEBUG, "joy.x  =  %04ld, joy.y  =  %04ld", coordCtrlJoy.x, coordCtrlJoy.y);
+                _log(LOG_LVL_DEBUG, "mouse.x = %04ld, mouse.y = %04ld", coordMouse.x, coordMouse.y);
+                _log(LOG_LVL_DEBUG, "acqNb = %u", ctrlJoyAcqNb);
+                loopCnt = 0U;
+            }
+
+            ctrlJoyAcqNb = 0U;
+            coordCtrlJoyAcc.x = 0;
+            coordCtrlJoyAcc.y = 0;
+
+            loopCnt += 1U;
+        }
+
+        uRet = CONTROLLER_getJoy(g_pCtrl, &coordCtrlJoy);
+        if (uRet)
+        {
+            _log(LOG_LVL_ERROR, "%s() CONTROLLER_getJoy FAILED", __func__);
+            vTaskDelay(1000U / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        ctrlJoyAcqNb += 1U;
+        coordCtrlJoyAcc.x += coordCtrlJoy.x;
+        coordCtrlJoyAcc.y += coordCtrlJoy.y;
+
+        // vTaskDelay(10U / portTICK_PERIOD_MS);
+    }
+}
+
+static void timerCb(void * pArg)
+{
+    BaseType_t ret = pdFALSE;
+
+    if (!g_semMoveMouse)
+    {
+        _log(LOG_LVL_ERROR, "%s() g_semMoveMouse NULL", __func__);
+        return;
+    }
+
+    ret = xSemaphoreGiveFromISR(g_semMoveMouse, NULL);
+    if (ret != pdTRUE)
+    {
+        _log(LOG_LVL_ERROR, "%s() xSemaphoreGive FAILED", __func__);
+        return;
+    }
+}
+
 void app_main(void)
 {
     uint8_t ret = 0U;
     esp_err_t espRet = ESP_OK;
     int btnBootVal = 0;
-    uint8_t bCtrlEn = 0U;
 
     const gpio_config_t gpioConfBtnBoot =
     {
@@ -139,6 +257,11 @@ void app_main(void)
         .pull_up_en = false,
         .pull_down_en = true,
     };
+
+    esp_timer_handle_t timerMouse = NULL;
+    esp_timer_create_args_t timerArg;
+    memset(&timerArg, 0, sizeof(timerArg));
+    TaskHandle_t task = NULL;
 
     ret = LOGGER_init(LOG_LVL_DEBUG);
     if (ret)
@@ -156,22 +279,52 @@ void app_main(void)
         UTILS_hang();
     }
 
+    _log(LOG_LVL_DEBUG, "%s() CONTROLLER_init", __func__);
+    g_pCtrl = CONTROLLER_init();
+    if (!g_pCtrl)
+    {
+        _log(LOG_LVL_ERROR, "%s() CONTROLLER_init FAILED", __func__);
+        UTILS_hang();
+    }
+
     _log(LOG_LVL_DEBUG, "%s() MOUSE_init", __func__);
-    g_pMouse = MOUSE_init();
+    g_pMouse = MOUSE_init(MOUSE_STATE_INIT);
     if (!g_pMouse)
     {
         _log(LOG_LVL_ERROR, "%s() MOUSE_init FAILED", __func__);
         UTILS_hang();
     }
 
-    // TODO remove mouse from ctrl
-    CONTROLLER_setMouse(g_pMouse);
-
-    _log(LOG_LVL_DEBUG, "%s() CONTROLLER_init", __func__);
-    g_pCtrl = CONTROLLER_init();
-    if (!g_pCtrl)
+    g_semMoveMouse = xSemaphoreCreateBinary();
+    if (!g_semMoveMouse)
     {
-        _log(LOG_LVL_ERROR, "%s() CONTROLLER_init FAILED", __func__);
+        _log(LOG_LVL_ERROR, "%s() xSemaphoreCreateBinary FAILED", __func__);
+        UTILS_hang();
+    }
+
+    _log(LOG_LVL_DEBUG, "%s() Create moveMouseFromCtrl task", __func__);
+    xTaskCreate(moveMouseFromCtrlMain, "moveMouseFromCtrl", 0x1000U, NULL, configMAX_PRIORITIES - 5U, &task);
+    if (!task)
+    {
+        _log(LOG_LVL_ERROR, "%s() xTaskCreate FAILED", __func__);
+        UTILS_hang();
+    }
+
+    timerArg.callback = &timerCb;
+    timerArg.arg = NULL;
+
+    _log(LOG_LVL_DEBUG, "%s() Create mouse timer", __func__);
+    espRet = esp_timer_create(&timerArg, &timerMouse);
+    if ((espRet != ESP_OK) || !timerMouse)
+    {
+        _log(LOG_LVL_ERROR, "%s() esp_timer_create FAILED", __func__);
+        UTILS_hang();
+    }
+
+    espRet = esp_timer_start_periodic(timerMouse, MOUSE_MOVE_PERIOD_US);
+    if (espRet != ESP_OK)
+    {
+        _log(LOG_LVL_ERROR, "%s() esp_timer_start_periodic FAILED", __func__);
         UTILS_hang();
     }
 
@@ -187,27 +340,8 @@ void app_main(void)
             {
                 // Boot button state is ON
 
-                // Controller state change
-                bCtrlEn = 1U - bCtrlEn;
-
-                if (bCtrlEn)
-                {
-                    _log(LOG_LVL_INFO, "Enable controller");
-                    ret = CONTROLLER_start(g_pCtrl);
-                    if (ret)
-                    {
-                        _log(LOG_LVL_ERROR, "%s() CONTROLLER_start FAILED", __func__);
-                    }
-                }
-                else
-                {
-                    _log(LOG_LVL_INFO, "Disable controller");
-                    ret = CONTROLLER_stop(g_pCtrl);
-                    if (ret)
-                    {
-                        _log(LOG_LVL_ERROR, "%s() CONTROLLER_stop FAILED", __func__);
-                    }
-                }
+                // Mouse state change
+                MOUSE_setEnabled(g_pMouse, 1U - MOUSE_getEnabled(g_pMouse));
             }
         }
 

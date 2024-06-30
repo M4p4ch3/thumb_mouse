@@ -94,7 +94,7 @@ static void _log(LogLevel_e lvl, const char * sFmt, ...)
     va_end(pArg);
 }
 
-Mouse_t * MOUSE_init(void)
+Mouse_t * MOUSE_init(uint8_t bEn)
 {
     int ret = 0;
     Mouse_t * pInst = NULL;
@@ -120,6 +120,7 @@ Mouse_t * MOUSE_init(void)
     }
 
     pInst->magic = MAGIC;
+    pInst->bEn = bEn;
 
     _log(LOG_LVL_DEBUG, "%s() Init USB", __func__);
 
@@ -139,7 +140,7 @@ out_err:
     return NULL;
 }
 
-void MOUSE_move(Mouse_t * pInst, int8_t x, int8_t y)
+void MOUSE_setEnabled(Mouse_t * pInst, uint8_t bEn)
 {
     if (!pInst || pInst->magic != MAGIC)
     {
@@ -147,5 +148,48 @@ void MOUSE_move(Mouse_t * pInst, int8_t x, int8_t y)
         return;
     }
 
+    pInst->bEn = bEn;
+
+    if (pInst->bEn)
+    {
+        _log(LOG_LVL_INFO, "Enabled");
+    }
+    else
+    {
+        _log(LOG_LVL_INFO, "Disabled");
+    }
+}
+
+uint8_t MOUSE_getEnabled(Mouse_t * pInst)
+{
+    if (!pInst || pInst->magic != MAGIC)
+    {
+        _log(LOG_LVL_ERROR, "%s() Bad instance pointer", __func__);
+        return 0U;
+    }
+
+    return pInst->bEn;
+}
+
+uint8_t MOUSE_move(Mouse_t * pInst, int8_t x, int8_t y)
+{
+    if (!pInst || pInst->magic != MAGIC)
+    {
+        _log(LOG_LVL_ERROR, "%s() Bad instance pointer", __func__);
+        return 1U;
+    }
+
+    if (pInst->bEn == 0U)
+    {
+        return 0U;
+    }
+
+    if ((x == 0U) && (y == 0U))
+    {
+        return 0U;
+    }
+
     tud_hid_mouse_report(HID_ITF_PROTOCOL_MOUSE, 0x00, x, y, 0, 0);
+
+    return 0U;
 }
