@@ -1,4 +1,6 @@
 
+#undef CONFIG_TRACKBALL_IT
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -6,7 +8,9 @@
 #include <inttypes.h>
 
 #include "esp_err.h"
+#ifdef CONFIG_TRACKBALL_IT
 #include "driver/gpio.h"
+#endif
 #include "driver/i2c.h"
 
 #include "logger.h"
@@ -65,6 +69,7 @@ static void _log(LogLevel_e lvl, const char * sFmt, ...)
     va_end(pArg);
 }
 
+#ifdef CONFIG_TRACKBALL_IT
 static void gpioIsrHandler(void * pArg)
 {
     Trackball_t * pInst = NULL;
@@ -132,6 +137,7 @@ static uint8_t initGpio(Trackball_t * pInst)
 
     return 0U;
 }
+#endif // CONFIG_TRACKBALL_IT
 
 static uint8_t initI2c(Trackball_t * pInst)
 {
@@ -210,6 +216,7 @@ static uint8_t write(Trackball_t * pInst, uint8_t * pData, uint16_t dataLen)
     return 0U;
 }
 
+#ifdef CONFIG_TRACKBALL_IT
 static uint8_t setIt(Trackball_t * pInst, bool state)
 {
     uint8_t ret = 0U;
@@ -251,6 +258,7 @@ static uint8_t setIt(Trackball_t * pInst, bool state)
 
     return 0U;
 }
+#endif // CONFIG_TRACKBALL_IT
 
 Trackball_t * TRACKBALL_init(void)
 {
@@ -270,17 +278,18 @@ Trackball_t * TRACKBALL_init(void)
 
     pInst->magic = MAGIC;
 
-    ret = initGpio(pInst);
-    if (ret)
-    {
-        _log(LOG_LVL_ERROR, "%s() initGpio FAILED", __func__);
-        goto out_free_err;
-    }
-
     ret = initI2c(pInst);
     if (ret)
     {
         _log(LOG_LVL_ERROR, "%s() initI2c FAILED", __func__);
+        goto out_free_err;
+    }
+
+#ifdef CONFIG_TRACKBALL_IT
+    ret = initGpio(pInst);
+    if (ret)
+    {
+        _log(LOG_LVL_ERROR, "%s() initGpio FAILED", __func__);
         goto out_free_err;
     }
 
@@ -290,6 +299,7 @@ Trackball_t * TRACKBALL_init(void)
         _log(LOG_LVL_ERROR, "%s() setIt FAILED", __func__);
         goto out_free_err;
     }
+#endif
 
     return pInst;
 
