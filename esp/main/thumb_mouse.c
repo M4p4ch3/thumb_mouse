@@ -7,6 +7,7 @@
 
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "driver/i2c.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -14,14 +15,23 @@
 #include "config.h"
 #include "logger.h"
 #include "controller.h"
+#include "trackball.h"
 #include "mouse.h"
 
 #define GPIO_NUM_BTN_BOOT GPIO_NUM_0
 
-static const uint32_t MOUSE_MOVE_PERIOD_US = US_PER_S / MOUSE_REPORT_FREQ_HZ;
+#define I2C_MASTER_SCL_IO           5       /*!< GPIO number used for I2C master clock */
+#define I2C_MASTER_SDA_IO           4       /*!< GPIO number used for I2C master data  */
+#define I2C_MASTER_NUM              0       /*!< I2C master i2c port number, the number of i2c peripheral interfaces available will depend on the chip */
+#define I2C_MASTER_FREQ_HZ          400000  /*!< I2C master clock frequency */
+#define I2C_MASTER_TX_BUF_DISABLE   0       /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_RX_BUF_DISABLE   0       /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_TIMEOUT_MS       1000
 
-// Initial mouse state
-static const uint8_t MOUSE_STATE_INIT = 0U;
+// static const uint32_t MOUSE_MOVE_PERIOD_US = US_PER_S / MOUSE_REPORT_FREQ_HZ;
+
+// // Initial mouse state
+// static const uint8_t MOUSE_STATE_INIT = 0U;
 
 static SemaphoreHandle_t g_semMoveMouse = NULL;
 
@@ -243,6 +253,40 @@ static void timerCb(void * pArg)
     }
 }
 
+/**
+ * @brief i2c master initialization
+ */
+static esp_err_t i2c_master_init(void)
+{
+    esp_err_t espRet = ESP_OK;
+    int i2c_master_port = I2C_MASTER_NUM;
+
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_MASTER_SDA_IO,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+    };
+
+    espRet = i2c_param_config(i2c_master_port, &conf);
+    if (espRet != ESP_OK)
+    {
+        _log(LOG_LVL_ERROR, "%s() i2c_param_config FAILED", __func__);
+        return espRet;
+    }
+
+    espRet = i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
+    if (espRet != ESP_OK)
+    {
+        _log(LOG_LVL_ERROR, "%s() i2c_driver_install FAILED", __func__);
+        return espRet;
+    }
+
+    return ESP_OK;
+}
+
 void app_main(void)
 {
     uint8_t ret = 0U;
@@ -272,59 +316,66 @@ void app_main(void)
 
     LOGGER_setLevel(MODULE_ID_MAIN, LOG_LVL_DEBUG);
 
-    espRet = gpio_config(&gpioConfBtnBoot);
+    // espRet = gpio_config(&gpioConfBtnBoot);
+    // if (espRet != ESP_OK)
+    // {
+    //     _log(LOG_LVL_ERROR, "%s() gpio_config FAILED", __func__);
+    //     UTILS_hang();
+    // }
+
+    // _log(LOG_LVL_DEBUG, "%s() CONTROLLER_init", __func__);
+    // g_pCtrl = CONTROLLER_init();
+    // if (!g_pCtrl)
+    // {
+    //     _log(LOG_LVL_ERROR, "%s() CONTROLLER_init FAILED", __func__);
+    //     UTILS_hang();
+    // }
+
+    // _log(LOG_LVL_DEBUG, "%s() MOUSE_init", __func__);
+    // g_pMouse = MOUSE_init(MOUSE_STATE_INIT);
+    // if (!g_pMouse)
+    // {
+    //     _log(LOG_LVL_ERROR, "%s() MOUSE_init FAILED", __func__);
+    //     UTILS_hang();
+    // }
+
+    // g_semMoveMouse = xSemaphoreCreateBinary();
+    // if (!g_semMoveMouse)
+    // {
+    //     _log(LOG_LVL_ERROR, "%s() xSemaphoreCreateBinary FAILED", __func__);
+    //     UTILS_hang();
+    // }
+
+    // _log(LOG_LVL_DEBUG, "%s() Create moveMouseFromCtrl task", __func__);
+    // xTaskCreate(moveMouseFromCtrlMain, "moveMouseFromCtrl", 0x1000U, NULL, configMAX_PRIORITIES - 5U, &task);
+    // if (!task)
+    // {
+    //     _log(LOG_LVL_ERROR, "%s() xTaskCreate FAILED", __func__);
+    //     UTILS_hang();
+    // }
+
+    // timerArg.callback = &timerCb;
+    // timerArg.arg = NULL;
+
+    // _log(LOG_LVL_DEBUG, "%s() Create mouse timer", __func__);
+    // espRet = esp_timer_create(&timerArg, &timerMouse);
+    // if ((espRet != ESP_OK) || !timerMouse)
+    // {
+    //     _log(LOG_LVL_ERROR, "%s() esp_timer_create FAILED", __func__);
+    //     UTILS_hang();
+    // }
+
+    // espRet = esp_timer_start_periodic(timerMouse, MOUSE_MOVE_PERIOD_US);
+    // if (espRet != ESP_OK)
+    // {
+    //     _log(LOG_LVL_ERROR, "%s() esp_timer_start_periodic FAILED", __func__);
+    //     UTILS_hang();
+    // }
+
+    espRet = i2c_master_init();
     if (espRet != ESP_OK)
     {
-        _log(LOG_LVL_ERROR, "%s() gpio_config FAILED", __func__);
-        UTILS_hang();
-    }
-
-    _log(LOG_LVL_DEBUG, "%s() CONTROLLER_init", __func__);
-    g_pCtrl = CONTROLLER_init();
-    if (!g_pCtrl)
-    {
-        _log(LOG_LVL_ERROR, "%s() CONTROLLER_init FAILED", __func__);
-        UTILS_hang();
-    }
-
-    _log(LOG_LVL_DEBUG, "%s() MOUSE_init", __func__);
-    g_pMouse = MOUSE_init(MOUSE_STATE_INIT);
-    if (!g_pMouse)
-    {
-        _log(LOG_LVL_ERROR, "%s() MOUSE_init FAILED", __func__);
-        UTILS_hang();
-    }
-
-    g_semMoveMouse = xSemaphoreCreateBinary();
-    if (!g_semMoveMouse)
-    {
-        _log(LOG_LVL_ERROR, "%s() xSemaphoreCreateBinary FAILED", __func__);
-        UTILS_hang();
-    }
-
-    _log(LOG_LVL_DEBUG, "%s() Create moveMouseFromCtrl task", __func__);
-    xTaskCreate(moveMouseFromCtrlMain, "moveMouseFromCtrl", 0x1000U, NULL, configMAX_PRIORITIES - 5U, &task);
-    if (!task)
-    {
-        _log(LOG_LVL_ERROR, "%s() xTaskCreate FAILED", __func__);
-        UTILS_hang();
-    }
-
-    timerArg.callback = &timerCb;
-    timerArg.arg = NULL;
-
-    _log(LOG_LVL_DEBUG, "%s() Create mouse timer", __func__);
-    espRet = esp_timer_create(&timerArg, &timerMouse);
-    if ((espRet != ESP_OK) || !timerMouse)
-    {
-        _log(LOG_LVL_ERROR, "%s() esp_timer_create FAILED", __func__);
-        UTILS_hang();
-    }
-
-    espRet = esp_timer_start_periodic(timerMouse, MOUSE_MOVE_PERIOD_US);
-    if (espRet != ESP_OK)
-    {
-        _log(LOG_LVL_ERROR, "%s() esp_timer_start_periodic FAILED", __func__);
+        _log(LOG_LVL_ERROR, "%s() i2c_master_init FAILED", __func__);
         UTILS_hang();
     }
 
@@ -340,10 +391,32 @@ void app_main(void)
             {
                 // Boot button state is ON
 
-                // Mouse state change
-                MOUSE_setEnabled(g_pMouse, 1U - MOUSE_getEnabled(g_pMouse));
+                // // Mouse state change
+                // MOUSE_setEnabled(g_pMouse, 1U - MOUSE_getEnabled(g_pMouse));
             }
         }
+
+        #define TRACKBALL_REG_ADDR 0x00
+
+        uint8_t dataRd[5U];
+        uint16_t dataRdLen = 5U;
+        uint8_t addrReg = TRACKBALL_REG_LEFT;
+
+        espRet = i2c_master_write_read_device(I2C_MASTER_NUM, TRACKBALL_ADDR,
+            &addrReg, sizeof(addrReg), &dataRd[0U], dataRdLen,
+            I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+        if (espRet != ESP_OK)
+        {
+            _log(LOG_LVL_ERROR, "%s() i2c_master_write_read_device FAILED", __func__);
+            vTaskDelay(1000U / portTICK_PERIOD_MS);
+        }
+
+        _log(LOG_LVL_DEBUG, "data = [0x%08X, 0x%08X, 0x%08X, 0x%08X, 0x%08X]",
+            dataRd[0U], dataRd[1U], dataRd[2U], dataRd[3U], dataRd[4U]);
+
+        // i2c_master_write_to_device(I2C_MASTER_NUM, TRACKBALL_ADDR,
+        //     write_buf, sizeof(write_buf),
+        //     I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 
         vTaskDelay(100U / portTICK_PERIOD_MS);
     }
