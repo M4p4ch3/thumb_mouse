@@ -19,6 +19,7 @@ typedef enum ModuleId_e
     MODULE_ID_NONE = 0,
     MODULE_ID_MAIN,
     MODULE_ID_CTRL,
+    MODULE_ID_TRACKBALL,
     MODULE_ID_MOUSE,
     MODULE_ID_NB,
 } ModuleId_e;

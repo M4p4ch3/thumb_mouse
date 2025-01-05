@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdarg.h>
 
+#include "esp_err.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
@@ -36,6 +37,7 @@
 static SemaphoreHandle_t g_semMoveMouse = NULL;
 
 static Controller_t * g_pCtrl = NULL;
+static Trackball_t * g_pTrackball = NULL;
 static Mouse_t * g_pMouse = NULL;
 
 static void __attribute__((format (printf, 2, 3))) _log(LogLevel_e lvl, const char * sFmt, ...);
@@ -253,40 +255,6 @@ static void timerCb(void * pArg)
     }
 }
 
-/**
- * @brief i2c master initialization
- */
-static esp_err_t i2c_master_init(void)
-{
-    esp_err_t espRet = ESP_OK;
-    int i2c_master_port = I2C_MASTER_NUM;
-
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_MASTER_SDA_IO,
-        .scl_io_num = I2C_MASTER_SCL_IO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_MASTER_FREQ_HZ,
-    };
-
-    espRet = i2c_param_config(i2c_master_port, &conf);
-    if (espRet != ESP_OK)
-    {
-        _log(LOG_LVL_ERROR, "%s() i2c_param_config FAILED", __func__);
-        return espRet;
-    }
-
-    espRet = i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
-    if (espRet != ESP_OK)
-    {
-        _log(LOG_LVL_ERROR, "%s() i2c_driver_install FAILED", __func__);
-        return espRet;
-    }
-
-    return ESP_OK;
-}
-
 void app_main(void)
 {
     uint8_t ret = 0U;
@@ -331,6 +299,14 @@ void app_main(void)
     //     UTILS_hang();
     // }
 
+    _log(LOG_LVL_DEBUG, "%s() CONTROLLER_init", __func__);
+    g_pTrackball = TRACKBALL_init();
+    if (!g_pTrackball)
+    {
+        _log(LOG_LVL_ERROR, "%s() TRACKBALL_init FAILED", __func__);
+        UTILS_hang();
+    }
+
     // _log(LOG_LVL_DEBUG, "%s() MOUSE_init", __func__);
     // g_pMouse = MOUSE_init(MOUSE_STATE_INIT);
     // if (!g_pMouse)
@@ -372,10 +348,10 @@ void app_main(void)
     //     UTILS_hang();
     // }
 
-    espRet = i2c_master_init();
-    if (espRet != ESP_OK)
+    ret = TRACKBALL_setColor(g_pTrackball, 0x80, 0x00, 0x00, 0x80);
+    if (ret)
     {
-        _log(LOG_LVL_ERROR, "%s() i2c_master_init FAILED", __func__);
+        _log(LOG_LVL_ERROR, "%s() TRACKBALL_setColor FAILED", __func__);
         UTILS_hang();
     }
 
@@ -396,27 +372,18 @@ void app_main(void)
             }
         }
 
-        #define TRACKBALL_REG_ADDR 0x00
-
-        uint8_t dataRd[5U];
-        uint16_t dataRdLen = 5U;
-        uint8_t addrReg = TRACKBALL_REG_LEFT;
-
-        espRet = i2c_master_write_read_device(I2C_MASTER_NUM, TRACKBALL_ADDR,
-            &addrReg, sizeof(addrReg), &dataRd[0U], dataRdLen,
-            I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
-        if (espRet != ESP_OK)
-        {
-            _log(LOG_LVL_ERROR, "%s() i2c_master_write_read_device FAILED", __func__);
-            vTaskDelay(1000U / portTICK_PERIOD_MS);
-        }
-
-        _log(LOG_LVL_DEBUG, "data = [0x%08X, 0x%08X, 0x%08X, 0x%08X, 0x%08X]",
-            dataRd[0U], dataRd[1U], dataRd[2U], dataRd[3U], dataRd[4U]);
-
-        // i2c_master_write_to_device(I2C_MASTER_NUM, TRACKBALL_ADDR,
-        //     write_buf, sizeof(write_buf),
+        // dataWr[0U] = TRACKBALL_REG_LEFT;
+        // espRet = i2c_master_write_read_device(I2C_MASTER_NUM, TRACKBALL_ADDR,
+        //     &dataWr[0U], 1U, &dataRd[0U], 5U,
         //     I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+        // if (espRet != ESP_OK)
+        // {
+        //     _log(LOG_LVL_ERROR, "%s() i2c_master_write_read_device FAILED", __func__);
+        //     vTaskDelay(1000U / portTICK_PERIOD_MS);
+        // }
+
+        // _log(LOG_LVL_DEBUG, "data = [0x%08X, 0x%08X, 0x%08X, 0x%08X, 0x%08X]",
+        //     dataRd[0U], dataRd[1U], dataRd[2U], dataRd[3U], dataRd[4U]);
 
         vTaskDelay(100U / portTICK_PERIOD_MS);
     }
