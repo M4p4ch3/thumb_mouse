@@ -12,6 +12,7 @@
 #include "driver/gpio.h"
 #endif
 #include "driver/i2c.h"
+#include "freertos/task.h"
 
 #include "logger.h"
 
@@ -260,9 +261,37 @@ static uint8_t setIt(Trackball_t * pInst, bool state)
 }
 #endif // CONFIG_TRACKBALL_IT
 
+static void getDataTaskEntry(Trackball_t * pInst)
+{
+    uint8_t ret = 0U;
+    uint8_t data[5U] = {0x00};
+
+    if (!pInst || pInst->magic != MAGIC)
+    {
+        _log(LOG_LVL_ERROR, "%s() Bad instance pointer", __func__);
+        return;
+    }
+
+    while (true)
+    {
+        ret = read(pInst, TRACKBALL_REG_LEFT, &data[0U], 5U);
+        if (ret)
+        {
+            _log(LOG_LVL_ERROR, "%s() Bad instance pointer", __func__);
+            vTaskDelay(1000U / portTICK_PERIOD_MS);
+        }
+
+        _log(LOG_LVL_DEBUG, "data = [0x%08X, 0x%08X, 0x%08X, 0x%08X, 0x%08X]",
+            data[0U], data[1U], data[2U], data[3U], data[4U]);
+
+        vTaskDelay(100U / portTICK_PERIOD_MS);
+    }
+}
+
 Trackball_t * TRACKBALL_init(void)
 {
     uint8_t ret = 0U;
+    TaskHandle_t task = NULL;
     Trackball_t * pInst = NULL;
 
     LOGGER_setLevel(MODULE_ID_TRACKBALL, LOG_LVL_DEBUG);
@@ -300,6 +329,13 @@ Trackball_t * TRACKBALL_init(void)
         goto out_free_err;
     }
 #endif
+
+    xTaskCreate(getDataTaskEntry, "trackballGetData", 0x1000U, pInst, 1U, &task);
+    if (!task)
+    {
+        _log(LOG_LVL_ERROR, "%s() xTaskCreate FAILED", __func__);
+        goto out_free_err;
+    }
 
     return pInst;
 
