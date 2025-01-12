@@ -1,6 +1,4 @@
 
-#undef CONFIG_TRACKBALL_IT
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -71,19 +69,17 @@ static void _log(LogLevel_e lvl, const char * sFmt, ...)
 }
 
 #ifdef CONFIG_TRACKBALL_IT
-static void gpioIsrHandler(void * pArg)
+static void gpioIsrHandler(void * pvInst)
 {
     Trackball_t * pInst = NULL;
 
-    _log(LOG_LVL_DEBUG, "%s()", __func__);
-
-    if (!pArg)
+    if (!pvInst)
     {
         return;
     }
 
-    pInst = (Trackball_t *) pArg;
-    (void) pInst;
+    pInst = (Trackball_t *) pvInst;
+    (void) xSemaphoreGiveFromISR(pInst->semIt, NULL);
 }
 
 static uint8_t initGpio(Trackball_t * pInst)
@@ -100,10 +96,11 @@ static uint8_t initGpio(Trackball_t * pInst)
         return 1U;
     }
 
-    conf.intr_type = GPIO_INTR_POSEDGE;
+    conf.intr_type = GPIO_INTR_NEGEDGE;
     conf.pin_bit_mask = 1ULL << PIN_I2C_INT;
     conf.mode = GPIO_MODE_INPUT;
     conf.pull_up_en = 1;
+    conf.pull_down_en = 0;
     ret = gpio_config(&conf);
     if (ret != ESP_OK)
     {
@@ -111,16 +108,12 @@ static uint8_t initGpio(Trackball_t * pInst)
         return 1U;
     }
 
-    ret = gpio_set_intr_type(PIN_I2C_INT, GPIO_INTR_POSEDGE);
+    ret = gpio_set_intr_type(PIN_I2C_INT, GPIO_INTR_NEGEDGE);
     if (ret != ESP_OK)
     {
         _log(LOG_LVL_ERROR, "%s() gpio_config FAILED", __func__);
         return 1U;
     }
-
-    // TODO
-    // gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    // xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL);
 
     ret = gpio_install_isr_service(0 /* flags */);
     if (ret != ESP_OK)
@@ -189,7 +182,7 @@ static uint8_t read(Trackball_t * pInst, uint8_t addr, uint8_t * pData, uint16_t
         I2C_MASTER_NUM, TRACKBALL_ADDR, &addr, 1U, pData, dataLen, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
     if (ret != ESP_OK)
     {
-        _log(LOG_LVL_ERROR, "%s() i2c_master_write_to_device FAILED", __func__);
+        _log(LOG_LVL_ERROR, "%s() i2c_master_write_to_device FAILED. ret = %d = 0x%X", __func__, ret, ret);
         return 1U;
     }
 
@@ -239,16 +232,22 @@ static uint8_t setIt(Trackball_t * pInst, bool state)
         return 1U;
     }
 
+#ifdef CONFIG_LOG_I2C
     _log(LOG_LVL_DEBUG, "  dataRd = 0x%08X", dataRd);
+#endif
 
     dataWr[0U] = TRACKBALL_REG_INT;
-    dataWr[1U] = dataRd & ~TRACKBALL_MSK_INT_OUT_EN;
+    dataWr[1U] = dataRd;
+    dataWr[1U] = dataWr[1U] & ~TRACKBALL_MSK_INT_TRIGGERED;
+    dataWr[1U] = dataWr[1U] & ~TRACKBALL_MSK_INT_OUT_EN;
     if (state)
     {
         dataWr[1U] |= TRACKBALL_MSK_INT_OUT_EN;
     }
 
+#ifdef CONFIG_LOG_I2C
     _log(LOG_LVL_DEBUG, "  dataWr = [0x%08X, 0x%08X]", dataWr[0U], dataWr[1U]);
+#endif
 
     ret = write(pInst, &dataWr[0U], 2U);
     if (ret)
@@ -257,15 +256,28 @@ static uint8_t setIt(Trackball_t * pInst, bool state)
         return 1U;
     }
 
+#ifdef CONFIG_LOG_I2C
+    ret = read(pInst, TRACKBALL_REG_INT, &dataRd, 1U);
+    if (ret)
+    {
+        _log(LOG_LVL_ERROR, "%s() read FAILED", __func__);
+        return 1U;
+    }
+
+    _log(LOG_LVL_DEBUG, "  dataRd = 0x%08X", dataRd);
+#endif
+
     return 0U;
 }
-#endif // CONFIG_TRACKBALL_IT
 
-static void getDataTaskEntry(Trackball_t * pInst)
+static void getDataTaskEntry(void * pvInst)
 {
     uint8_t ret = 0U;
     uint8_t data[5U] = {0x00};
+    BaseType_t retBase = pdFALSE;
+    Trackball_t * pInst = NULL;
 
+    pInst = (Trackball_t *) pvInst;
     if (!pInst || pInst->magic != MAGIC)
     {
         _log(LOG_LVL_ERROR, "%s() Bad instance pointer", __func__);
@@ -274,24 +286,36 @@ static void getDataTaskEntry(Trackball_t * pInst)
 
     while (true)
     {
+        retBase = xSemaphoreTake(pInst->semIt, portMAX_DELAY);
+        if (retBase != pdTRUE)
+        {
+            _log(LOG_LVL_ERROR, "%s() xSemaphoreTake FAILED", __func__);
+            vTaskDelay(1000U / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        // Read INT reg to clear IT ?
+        // Clear IT by writing in INT reg ?
+
         ret = read(pInst, TRACKBALL_REG_LEFT, &data[0U], 5U);
         if (ret)
         {
-            _log(LOG_LVL_ERROR, "%s() Bad instance pointer", __func__);
-            vTaskDelay(1000U / portTICK_PERIOD_MS);
+            _log(LOG_LVL_ERROR, "%s() read FAILED", __func__);
+            continue;
         }
 
         _log(LOG_LVL_DEBUG, "data = [0x%08X, 0x%08X, 0x%08X, 0x%08X, 0x%08X]",
             data[0U], data[1U], data[2U], data[3U], data[4U]);
-
-        vTaskDelay(100U / portTICK_PERIOD_MS);
     }
 }
+#endif // CONFIG_TRACKBALL_IT
 
 Trackball_t * TRACKBALL_init(void)
 {
     uint8_t ret = 0U;
+#ifdef CONFIG_TRACKBALL_IT
     TaskHandle_t task = NULL;
+#endif
     Trackball_t * pInst = NULL;
 
     LOGGER_setLevel(MODULE_ID_TRACKBALL, LOG_LVL_DEBUG);
@@ -301,11 +325,20 @@ Trackball_t * TRACKBALL_init(void)
     pInst = (Trackball_t *) malloc(sizeof(Trackball_t));
     if (!pInst)
     {
-        _log(LOG_LVL_ERROR, "%s() malloc %u Bytes for Trackball_t FAILED", __func__, sizeof(Trackball_t));
+        _log(LOG_LVL_ERROR, "%s() malloc %u Bytes for Trackball_t FAILED", __func__, (uint16_t) sizeof(Trackball_t));
         goto out_err;
     }
 
     pInst->magic = MAGIC;
+
+#ifdef CONFIG_TRACKBALL_IT
+    pInst->semIt = xSemaphoreCreateBinary();
+    if (!pInst->semIt)
+    {
+        _log(LOG_LVL_ERROR, "%s() xSemaphoreCreateBinary FAILED", __func__);
+        goto out_free_err;
+    }
+#endif
 
     ret = initI2c(pInst);
     if (ret)
@@ -321,14 +354,22 @@ Trackball_t * TRACKBALL_init(void)
         _log(LOG_LVL_ERROR, "%s() initGpio FAILED", __func__);
         goto out_free_err;
     }
+#endif
 
+    ret = TRACKBALL_reset(pInst);
+    if (ret)
+    {
+        _log(LOG_LVL_ERROR, "%s() reset FAILED", __func__);
+        goto out_free_err;
+    }
+
+#ifdef CONFIG_TRACKBALL_IT
     ret = setIt(pInst, true);
     if (ret)
     {
         _log(LOG_LVL_ERROR, "%s() setIt FAILED", __func__);
         goto out_free_err;
     }
-#endif
 
     xTaskCreate(getDataTaskEntry, "trackballGetData", 0x1000U, pInst, 1U, &task);
     if (!task)
@@ -336,6 +377,7 @@ Trackball_t * TRACKBALL_init(void)
         _log(LOG_LVL_ERROR, "%s() xTaskCreate FAILED", __func__);
         goto out_free_err;
     }
+#endif
 
     return pInst;
 
@@ -344,6 +386,33 @@ out_free_err:
         free(pInst);
 out_err:
     return NULL;
+}
+
+uint8_t TRACKBALL_reset(Trackball_t * pInst)
+{
+    uint8_t ret = 0U;
+    uint8_t data[2U] = {0x00};
+
+    _log(LOG_LVL_DEBUG, "%s()", __func__);
+
+    if (!pInst || pInst->magic != MAGIC)
+    {
+        _log(LOG_LVL_ERROR, "%s() Bad instance pointer", __func__);
+        return 1U;
+    }
+
+    data[0U] = TRACKBALL_REG_CTRL;
+    data[1U] = TRACKBALL_MSK_CTRL_RESET;
+    ret = write(pInst, &data[0U], 2U);
+    if (ret)
+    {
+        _log(LOG_LVL_ERROR, "%s() i2c_master_write_to_device FAILED", __func__);
+        return 1U;
+    }
+
+    vTaskDelay(100U / portTICK_PERIOD_MS);
+
+    return 0U;
 }
 
 uint8_t TRACKBALL_setColor(Trackball_t * pInst, uint8_t red, uint8_t green, uint8_t blue, uint8_t white)
