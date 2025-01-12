@@ -415,6 +415,72 @@ uint8_t TRACKBALL_reset(Trackball_t * pInst)
     return 0U;
 }
 
+uint8_t TRACKBALL_getData(Trackball_t * pInst, int8_t * axisX, int8_t * axisY)
+{
+#define DATA_LEN            (TRACKBALL_REG_SWITCH - TRACKBALL_REG_LEFT + 1)
+#define DATA_IDX_LEFT       (TRACKBALL_REG_LEFT - TRACKBALL_REG_LEFT)
+#define DATA_IDX_RIGHT      (TRACKBALL_REG_RIGHT - TRACKBALL_REG_LEFT)
+#define DATA_IDX_UP         (TRACKBALL_REG_UP - TRACKBALL_REG_LEFT)
+#define DATA_IDX_DOWN       (TRACKBALL_REG_DOWN - TRACKBALL_REG_LEFT)
+#define DATA_IDX_SWITCH     (TRACKBALL_REG_SWITCH - TRACKBALL_REG_LEFT)
+
+    uint8_t ret = 0U;
+    uint8_t data[DATA_LEN] = {0x00};
+
+    if (!pInst || pInst->magic != MAGIC)
+    {
+        _log(LOG_LVL_ERROR, "%s() Bad instance pointer", __func__);
+        return 1U;
+    }
+
+    if (!axisX || !axisY)
+    {
+        _log(LOG_LVL_ERROR, "%s() Input arg not defined", __func__);
+        return 1U;
+    }
+
+    *axisX = 0;
+    *axisY = 0;
+
+    ret = read(pInst, TRACKBALL_REG_LEFT, &data[0U], DATA_LEN);
+    if (ret)
+    {
+        _log(LOG_LVL_ERROR, "%s() read FAILED", __func__);
+        return 1U;
+    }
+
+#ifdef CONFIG_LOG_I2C
+    _log(LOG_LVL_DEBUG, "%s() data = [0x%08X, 0x%08X, 0x%08X, 0x%08X, 0x%08X]",
+        __func__, data[0U], data[1U], data[2U], data[3U], data[4U]);
+#endif
+
+    if (data[DATA_IDX_LEFT] || data[DATA_IDX_RIGHT])
+    {
+        if (data[DATA_IDX_LEFT] > data[DATA_IDX_RIGHT])
+        {
+            *axisX = -data[DATA_IDX_LEFT];
+        }
+        else
+        {
+            *axisX = data[DATA_IDX_RIGHT];
+        }
+    }
+
+    if (data[DATA_IDX_UP] || data[DATA_IDX_DOWN])
+    {
+        if (data[DATA_IDX_UP] > data[DATA_IDX_DOWN])
+        {
+            *axisY = -data[DATA_IDX_UP];
+        }
+        else
+        {
+            *axisY = data[DATA_IDX_DOWN];
+        }
+    }
+
+    return 0U;
+}
+
 uint8_t TRACKBALL_setColor(Trackball_t * pInst, uint8_t red, uint8_t green, uint8_t blue, uint8_t white)
 {
     uint8_t ret = 0U;
