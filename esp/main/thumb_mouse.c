@@ -255,38 +255,149 @@ static void timerCb(void * pArg)
     }
 }
 
-// Accelerate and multiply value by coefs
-int8_t accelMult(int8_t val, uint8_t accel, uint8_t mult)
+// Apply acceleration and speed to value
+int8_t applyAccelSpeed(int8_t val, float daccel, float accel, float speed)
 {
+    int16_t magnitude = 0U;
+    float fVal = 0.0;
+
     if (!val)
     {
         return 0;
     }
 
-    return val / abs(val) * accel * val * val + mult * val;
+    fVal = (float) abs(val);
+
+    magnitude = daccel * fVal * fVal * fVal + accel * fVal * fVal + speed * fVal;
+    if (magnitude > 127)
+    {
+        magnitude = 127;
+    }
+
+    return val / abs(val) * (int8_t) magnitude;
 }
+
+typedef enum MouseModeId
+{
+    MOUSE_MODE_ID_SLOW = 0,
+    MOUSE_MODE_ID_NORMAL,
+    MOUSE_MODE_ID_FAST,
+    MOUSE_MODE_ID_NB,
+} MouseModeId_e;
+
+typedef struct TrackBallColor
+{
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t w;
+} TrackBallColor_t;
+
+typedef struct MouseMode
+{
+    MouseModeId_e id;
+    float daccel;
+    float accel;
+    float speed;
+    TrackBallColor_t color;
+} MouseMode_t;
+
+static const MouseMode_t MOUSE_MODE_LIST[] =
+{
+    {
+        .id = MOUSE_MODE_ID_SLOW,
+        .daccel = 0.3,
+        .accel = 0.4,
+        .speed = 0.3,
+        .color =
+        {
+            .r = 0x00,
+            .g = 0x80,
+            .b = 0x00,
+            .w = 0x80,
+        }
+    },
+    {
+        .id = MOUSE_MODE_ID_NORMAL,
+        .daccel = 0.4,
+        .accel = 0.3,
+        .speed = 0.3,
+        .color =
+        {
+            .r = 0x00,
+            .g = 0x00,
+            .b = 0x80,
+            .w = 0x80,
+        }
+    },
+    {
+        .id = MOUSE_MODE_ID_FAST,
+        .daccel = 0.5,
+        .accel = 0.25,
+        .speed = 0.25,
+        .color =
+        {
+            .r = 0x80,
+            .g = 0x00,
+            .b = 0x00,
+            .w = 0x80,
+        }
+    },
+};
 
 static void taskReadTrackball(void * pvArg)
 {
-#define ACCEL 1U
-#define MULT 1U
-
     uint8_t ret = 0U;
+    bool trackballSwPrev = false;
+    bool trackballSw = false;
     int8_t trackballX = 0;
     int8_t trackballY = 0;
     int8_t mouseX = 0;
     int8_t mouseY = 0;
+    MouseModeId_e mouseModeId = MOUSE_MODE_ID_SLOW;
+    float daccel = 0.0;
+    float accel = 0.0;
+    float speed = 0.0;
 
     (void) pvArg;
 
+    daccel = MOUSE_MODE_LIST[mouseModeId].daccel;
+    accel = MOUSE_MODE_LIST[mouseModeId].accel;
+    speed = MOUSE_MODE_LIST[mouseModeId].speed;
+    TRACKBALL_setColor(g_pTrackball,
+        MOUSE_MODE_LIST[mouseModeId].color.r,
+        MOUSE_MODE_LIST[mouseModeId].color.g,
+        MOUSE_MODE_LIST[mouseModeId].color.b,
+        MOUSE_MODE_LIST[mouseModeId].color.w);
+
     while (true)
     {
-        ret = TRACKBALL_getData(g_pTrackball, &trackballX, &trackballY);
+        trackballSwPrev = trackballSw;
+
+        ret = TRACKBALL_getData(g_pTrackball, &trackballX, &trackballY, &trackballSw);
         if (ret)
         {
             _log(LOG_LVL_ERROR, "%s() TRACKBALL_getData FAILED", __func__);
             vTaskDelay(1000U / portTICK_PERIOD_MS);
             continue;
+        }
+
+        if (trackballSw && !trackballSwPrev)
+        {
+            mouseModeId += 1U;
+            if (mouseModeId == MOUSE_MODE_ID_NB)
+            {
+                mouseModeId = MOUSE_MODE_ID_SLOW;
+            }
+
+            daccel = MOUSE_MODE_LIST[mouseModeId].daccel;
+            accel = MOUSE_MODE_LIST[mouseModeId].accel;
+            speed = MOUSE_MODE_LIST[mouseModeId].speed;
+            TRACKBALL_setColor(g_pTrackball,
+                MOUSE_MODE_LIST[mouseModeId].color.r,
+                MOUSE_MODE_LIST[mouseModeId].color.g,
+                MOUSE_MODE_LIST[mouseModeId].color.b,
+                MOUSE_MODE_LIST[mouseModeId].color.w);
         }
 
         if (!trackballX && !trackballY)
@@ -295,10 +406,13 @@ static void taskReadTrackball(void * pvArg)
             continue;
         }
 
-        // _log(LOG_LVL_DEBUG, "%s() axisX = %02d, axisY = %02d", __func__, axisX, axisY);
+        mouseX = applyAccelSpeed(trackballX, daccel, accel, speed);
+        mouseY = applyAccelSpeed(trackballY, daccel, accel, speed);
 
-        mouseX = accelMult(trackballX, ACCEL, MULT);
-        mouseY = accelMult(trackballY, ACCEL, MULT);
+        // _log(LOG_LVL_DEBUG, "%s()", __func__);
+        // _log(LOG_LVL_DEBUG, "  Trackball : X = %+04d, Y = %+04d", trackballX, trackballY);
+        // _log(LOG_LVL_DEBUG, "  Mouse     : X = %+04d, Y = %+04d", mouseX, mouseY);
+
         ret = MOUSE_move(g_pMouse, mouseX, mouseY);
         if (ret)
         {
@@ -412,12 +526,12 @@ void app_main(void)
     //     UTILS_hang();
     // }
 
-    ret = TRACKBALL_setColor(g_pTrackball, 0x80, 0x00, 0x00, 0x80);
-    if (ret)
-    {
-        _log(LOG_LVL_ERROR, "%s() TRACKBALL_setColor FAILED", __func__);
-        UTILS_hang();
-    }
+    // ret = TRACKBALL_setColor(g_pTrackball, 0x80, 0x00, 0x00, 0x80);
+    // if (ret)
+    // {
+    //     _log(LOG_LVL_ERROR, "%s() TRACKBALL_setColor FAILED", __func__);
+    //     UTILS_hang();
+    // }
 
     _log(LOG_LVL_DEBUG, "%s() Loop start", __func__);
     while (true)
