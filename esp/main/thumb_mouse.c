@@ -255,6 +255,62 @@ static void timerCb(void * pArg)
     }
 }
 
+// Accelerate and multiply value by coefs
+int8_t accelMult(int8_t val, uint8_t accel, uint8_t mult)
+{
+    if (!val)
+    {
+        return 0;
+    }
+
+    return val / abs(val) * accel * val * val + mult * val;
+}
+
+static void taskReadTrackball(void * pvArg)
+{
+#define ACCEL 1U
+#define MULT 1U
+
+    uint8_t ret = 0U;
+    int8_t trackballX = 0;
+    int8_t trackballY = 0;
+    int8_t mouseX = 0;
+    int8_t mouseY = 0;
+
+    (void) pvArg;
+
+    while (true)
+    {
+        ret = TRACKBALL_getData(g_pTrackball, &trackballX, &trackballY);
+        if (ret)
+        {
+            _log(LOG_LVL_ERROR, "%s() TRACKBALL_getData FAILED", __func__);
+            vTaskDelay(1000U / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        if (!trackballX && !trackballY)
+        {
+            vTaskDelay(10U / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        // _log(LOG_LVL_DEBUG, "%s() axisX = %02d, axisY = %02d", __func__, axisX, axisY);
+
+        mouseX = accelMult(trackballX, ACCEL, MULT);
+        mouseY = accelMult(trackballY, ACCEL, MULT);
+        ret = MOUSE_move(g_pMouse, mouseX, mouseY);
+        if (ret)
+        {
+            _log(LOG_LVL_ERROR, "%s() MOUSE_move FAILED", __func__);
+            vTaskDelay(1000U / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        vTaskDelay(10U / portTICK_PERIOD_MS);
+    }
+}
+
 void app_main(void)
 {
     uint8_t ret = 0U;
@@ -307,13 +363,13 @@ void app_main(void)
         UTILS_hang();
     }
 
-    // _log(LOG_LVL_DEBUG, "%s() MOUSE_init", __func__);
-    // g_pMouse = MOUSE_init(MOUSE_STATE_INIT);
-    // if (!g_pMouse)
-    // {
-    //     _log(LOG_LVL_ERROR, "%s() MOUSE_init FAILED", __func__);
-    //     UTILS_hang();
-    // }
+    _log(LOG_LVL_DEBUG, "%s() MOUSE_init", __func__);
+    g_pMouse = MOUSE_init(true /* bEn */);
+    if (!g_pMouse)
+    {
+        _log(LOG_LVL_ERROR, "%s() MOUSE_init FAILED", __func__);
+        UTILS_hang();
+    }
 
     // g_semMoveMouse = xSemaphoreCreateBinary();
     // if (!g_semMoveMouse)
@@ -329,6 +385,14 @@ void app_main(void)
     //     _log(LOG_LVL_ERROR, "%s() xTaskCreate FAILED", __func__);
     //     UTILS_hang();
     // }
+
+    _log(LOG_LVL_DEBUG, "%s() Create taskReadTrackball task", __func__);
+    xTaskCreate(taskReadTrackball, "readTrackball", 0x1000U, NULL, configMAX_PRIORITIES - 5U, &task);
+    if (!task)
+    {
+        _log(LOG_LVL_ERROR, "%s() xTaskCreate FAILED", __func__);
+        UTILS_hang();
+    }
 
     // timerArg.callback = &timerCb;
     // timerArg.arg = NULL;
