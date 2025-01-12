@@ -42,6 +42,7 @@ static const char * MODULE_NAME_LIST[] =
     "NONE",
     "MAIN",
     "CTRL",
+    "TRACKBALL",
     "MOUSE",
     "UNKNOWN",
 };

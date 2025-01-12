@@ -299,7 +299,7 @@ void app_main(void)
     //     UTILS_hang();
     // }
 
-    _log(LOG_LVL_DEBUG, "%s() CONTROLLER_init", __func__);
+    _log(LOG_LVL_DEBUG, "%s() TRACKBALL_init", __func__);
     g_pTrackball = TRACKBALL_init();
     if (!g_pTrackball)
     {
