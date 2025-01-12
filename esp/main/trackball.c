@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <inttypes.h>
+#include <stdbool.h>
 
 #include "esp_err.h"
 #ifdef CONFIG_TRACKBALL_IT
@@ -415,7 +416,7 @@ uint8_t TRACKBALL_reset(Trackball_t * pInst)
     return 0U;
 }
 
-uint8_t TRACKBALL_getData(Trackball_t * pInst, int8_t * axisX, int8_t * axisY)
+uint8_t TRACKBALL_getData(Trackball_t * pInst, int8_t * axisX, int8_t * axisY, bool * bSwitch)
 {
 #define DATA_LEN            (TRACKBALL_REG_SWITCH - TRACKBALL_REG_LEFT + 1)
 #define DATA_IDX_LEFT       (TRACKBALL_REG_LEFT - TRACKBALL_REG_LEFT)
@@ -441,6 +442,7 @@ uint8_t TRACKBALL_getData(Trackball_t * pInst, int8_t * axisX, int8_t * axisY)
 
     *axisX = 0;
     *axisY = 0;
+    *bSwitch = false;
 
     ret = read(pInst, TRACKBALL_REG_LEFT, &data[0U], DATA_LEN);
     if (ret)
@@ -476,6 +478,11 @@ uint8_t TRACKBALL_getData(Trackball_t * pInst, int8_t * axisX, int8_t * axisY)
         {
             *axisY = data[DATA_IDX_DOWN];
         }
+    }
+
+    if (data[DATA_IDX_SWITCH] & TRACKBALL_MSK_SWITCH_STATE)
+    {
+        *bSwitch = true;
     }
 
     return 0U;

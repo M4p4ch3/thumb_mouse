@@ -3,6 +3,7 @@
 #define TRACKBALL_H
 
 #include <inttypes.h>
+#include <stdbool.h>
 
 #include "freertos/semphr.h"
 
@@ -19,7 +20,7 @@ typedef struct Trackball_t
 
 Trackball_t * TRACKBALL_init(void);
 uint8_t TRACKBALL_reset(Trackball_t * pInst);
-uint8_t TRACKBALL_getData(Trackball_t * pInst, int8_t * axisX, int8_t * axisY);
+uint8_t TRACKBALL_getData(Trackball_t * pInst, int8_t * axisX, int8_t * axisY, bool * bSwitch);
 uint8_t TRACKBALL_setColor(Trackball_t * pInst, uint8_t red, uint8_t green, uint8_t blue, uint8_t white);
 
 #endif // TRACKBALL_H
